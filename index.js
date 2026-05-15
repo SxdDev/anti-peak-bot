@@ -1,5 +1,6 @@
 require("dotenv").config();
 
+const crypto = require("crypto");
 const express = require("express");
 const {
   ActionRowBuilder,
@@ -14,7 +15,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get("/", (req, res) => {
-  res.send("Anti Peak bot is running");
+  res.send("Anti-Peak Bot is running.");
 });
 
 app.listen(PORT, () => {
@@ -35,23 +36,20 @@ const MATCH_TIMEOUT_MS = 5 * 60 * 1000;
 
 // Temporary in-memory match storage. This resets when the bot restarts.
 const matches = new Map();
-let nextMatchNumber = 1;
 
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-function createMatchId() {
-  const matchId = `match-${Date.now()}-${nextMatchNumber}`;
-  nextMatchNumber += 1;
-  return matchId;
+function createMatchKey() {
+  return crypto.randomUUID();
 }
 
-function createCancelButton(matchId) {
+function createCancelButton(matchKey) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`cancel_match:${matchId}`)
-      .setLabel("Cancel")
+      .setCustomId(`cancel_match:${matchKey}`)
+      .setLabel("Cancel Match")
       .setStyle(ButtonStyle.Danger)
   );
 }
@@ -134,20 +132,20 @@ function startMatchTimer(match, reason) {
   clearMatchTimer(match);
 
   match.timer = setTimeout(async () => {
-    await cancelMatch(match.id, reason);
+    await cancelMatch(match.key, reason);
   }, MATCH_TIMEOUT_MS);
 }
 
-async function cancelMatch(matchId, reason) {
-  const match = matches.get(matchId);
+async function cancelMatch(matchKey, reason) {
+  const match = matches.get(matchKey);
   if (!match) return;
 
   clearMatchTimer(match);
-  matches.delete(matchId);
+  matches.delete(matchKey);
 
   try {
     const channel = await client.channels.fetch(match.channelId);
-    await channel.send(`Match setup ${match.id} was canceled. ${reason}`);
+    await channel.send(`**Match setup canceled.** ${reason}`);
   } catch (error) {
     console.error("Could not send cancel message:", error);
   }
@@ -157,11 +155,12 @@ async function askPlayersForUnits(match) {
   const playerOne = await client.users.fetch(match.playerOneId);
   const playerTwo = await client.users.fetch(match.playerTwoId);
   const prompt =
-    `Match setup ${match.id}\n` +
-    "Which two units will you be using? Please reply like: Unit 1, Unit 2";
+    "**Match Setup**\n" +
+    "Please reply with the **two units** you will be using, separated by a comma.\n" +
+    "Example: **Unit 1, Unit 2**";
 
-  await playerOne.send({ content: prompt, components: [createCancelButton(match.id)] });
-  await playerTwo.send({ content: prompt, components: [createCancelButton(match.id)] });
+  await playerOne.send({ content: prompt, components: [createCancelButton(match.key)] });
+  await playerTwo.send({ content: prompt, components: [createCancelButton(match.key)] });
 }
 
 async function sendMatchConfirmation(match) {
@@ -170,9 +169,9 @@ async function sendMatchConfirmation(match) {
   const playerTwoUnits = match.players[match.playerTwoId].units.join(", ");
 
   await channel.send(
-    `Match Confirmed (${match.id})\n` +
-      `Player 1: <@${match.playerOneId}> - Units: ${playerOneUnits}\n` +
-      `Player 2: <@${match.playerTwoId}> - Units: ${playerTwoUnits}`
+    "**Match Confirmed**\n" +
+      `**Player 1:** <@${match.playerOneId}> | **Units:** ${playerOneUnits}\n` +
+      `**Player 2:** <@${match.playerTwoId}> | **Units:** ${playerTwoUnits}`
   );
 }
 
@@ -180,12 +179,12 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isButton()) return;
   if (!interaction.customId.startsWith("cancel_match:")) return;
 
-  const matchId = interaction.customId.split(":")[1];
-  const match = matches.get(matchId);
+  const matchKey = interaction.customId.split(":")[1];
+  const match = matches.get(matchKey);
 
   if (!match) {
     await interaction.reply(
-      privateInteractionReply("That match setup is no longer active.", interaction)
+      privateInteractionReply("**This match setup is no longer active.**", interaction)
     );
     return;
   }
@@ -195,23 +194,26 @@ client.on("interactionCreate", async (interaction) => {
 
   if (!canCancel) {
     await interaction.reply(
-      privateInteractionReply("Only the players in this match setup can cancel it.", interaction)
+      privateInteractionReply(
+        "**Only the players in this match setup can cancel it.**",
+        interaction
+      )
     );
     return;
   }
 
   await interaction.reply(
-    privateInteractionReply(`Match setup ${match.id} was canceled.`, interaction)
+    privateInteractionReply("**Match setup canceled.**", interaction)
   );
 
-  await cancelMatch(match.id, "Canceled by a player.");
+  await cancelMatch(match.key, "Canceled by a player.");
 });
 
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
   if (message.content === "!ping") {
-    await message.reply("pong");
+    await message.reply("**Pong.** The bot is online.");
     return;
   }
 
@@ -222,14 +224,18 @@ client.on("messageCreate", async (message) => {
     const units = parseTwoUnits(message.content);
     if (!units) {
       await message.reply({
-        content: "Please send exactly two units separated by a comma, like: unit1, unit2",
-        components: [createCancelButton(match.id)],
+        content:
+          "Please send **exactly two units** separated by a comma.\n" +
+          "Example: **Unit 1, Unit 2**",
+        components: [createCancelButton(match.key)],
       });
       return;
     }
 
     match.players[message.author.id].units = units;
-    await message.reply("Got it. Waiting for the other player if they have not answered yet.");
+    await message.reply(
+      "**Units received.** Waiting for the other player to submit their units."
+    );
 
     const bothPlayersAnswered = Object.values(match.players).every((player) => player.units);
     if (!bothPlayersAnswered) return;
@@ -241,7 +247,7 @@ client.on("messageCreate", async (message) => {
     } catch (error) {
       console.error("Could not send match confirmation:", error);
     } finally {
-      matches.delete(match.id);
+      matches.delete(match.key);
     }
 
     return;
@@ -258,32 +264,32 @@ client.on("messageCreate", async (message) => {
 
     if (!opponent) {
       await message.reply({
-        content: "Please mention one human opponent.",
-        components: [createCancelButton(waitingMatch.id)],
+        content: "Please mention **one human opponent**.",
+        components: [createCancelButton(waitingMatch.key)],
       });
       return;
     }
 
     if (opponent.id === message.author.id) {
       await message.reply({
-        content: "You cannot play against yourself. Please mention another human opponent.",
-        components: [createCancelButton(waitingMatch.id)],
+        content: "You cannot play against yourself. Please mention **another human opponent**.",
+        components: [createCancelButton(waitingMatch.key)],
       });
       return;
     }
 
     if (opponent.bot) {
       await message.reply({
-        content: "Please mention a human opponent, not a bot.",
-        components: [createCancelButton(waitingMatch.id)],
+        content: "Please mention **a human opponent**, not a bot.",
+        components: [createCancelButton(waitingMatch.key)],
       });
       return;
     }
 
     if (findActiveMatchForPlayer(opponent.id)) {
       await message.reply({
-        content: "That player already has an active match setup.",
-        components: [createCancelButton(waitingMatch.id)],
+        content: "That player already has **an active match setup**.",
+        components: [createCancelButton(waitingMatch.key)],
       });
       return;
     }
@@ -296,14 +302,16 @@ client.on("messageCreate", async (message) => {
       await askPlayersForUnits(waitingMatch);
       startMatchTimer(
         waitingMatch,
-        "Both players did not submit their units within 5 minutes."
+        "Both players did not submit their units within **5 minutes**."
       );
-      await message.reply("I sent both players a DM. Please answer there with your two units.");
+      await message.reply(
+        "**DMs sent.** Please respond there with your two units."
+      );
     } catch (error) {
       console.error("Could not DM one or both players:", error);
       await cancelMatch(
-        waitingMatch.id,
-        "I could not DM one or both players. Please make sure both players allow DMs from this server, then try again."
+        waitingMatch.key,
+        "I could not DM one or both players. Please make sure both players allow **DMs from this server**, then try again."
       );
     }
 
@@ -316,17 +324,17 @@ client.on("messageCreate", async (message) => {
   if (!mentionedBot) return;
 
   if (findActiveMatchStartedBy(message.author.id)) {
-    await message.reply("You already have an active match setup.");
+    await message.reply("You already have **an active match setup**.");
     return;
   }
 
   if (findActiveMatchForPlayer(message.author.id)) {
-    await message.reply("You are already part of an active match setup.");
+    await message.reply("You are already part of **an active match setup**.");
     return;
   }
 
   const match = {
-    id: createMatchId(),
+    key: createMatchKey(),
     channelId: message.channel.id,
     playerOneId: message.author.id,
     playerTwoId: null,
@@ -337,12 +345,12 @@ client.on("messageCreate", async (message) => {
     },
   };
 
-  matches.set(match.id, match);
-  startMatchTimer(match, "No opponent was selected within 5 minutes.");
+  matches.set(match.key, match);
+  startMatchTimer(match, "No opponent was selected within **5 minutes**.");
 
   await message.reply({
-    content: `Match setup ${match.id} started. Who is your opponent? Please mention them.`,
-    components: [createCancelButton(match.id)],
+    content: "**Match setup started.** Please mention your opponent.",
+    components: [createCancelButton(match.key)],
   });
 });
 
