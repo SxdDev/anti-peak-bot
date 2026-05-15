@@ -146,7 +146,7 @@ async function askPlayersForUnits(match) {
   const playerTwo = await client.users.fetch(match.playerTwoId);
   const prompt =
     `Match setup ${match.id}\n` +
-    "What two units will you be using? Please reply like: unit1, unit2";
+    "Which two units will you be using? Please reply like: Unit 1, Unit 2";
 
   await playerOne.send({ content: prompt, components: [createCancelButton(match.id)] });
   await playerTwo.send({ content: prompt, components: [createCancelButton(match.id)] });
