@@ -1,5 +1,6 @@
 require("dotenv").config();
 
+const express = require("express");
 const {
   ActionRowBuilder,
   ButtonBuilder,
@@ -8,6 +9,15 @@ const {
   GatewayIntentBits,
   Partials,
 } = require("discord.js");
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get("/", (req, res) => {
+  res.send("Bot is running");
+});
+
+app.listen(PORT);
 
 const client = new Client({
   intents: [
